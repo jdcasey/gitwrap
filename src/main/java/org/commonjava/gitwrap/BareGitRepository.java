@@ -21,19 +21,28 @@ import org.apache.log4j.Logger;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.errors.NotSupportedException;
 import org.eclipse.jgit.errors.TransportException;
+import org.eclipse.jgit.lib.Commit;
 import org.eclipse.jgit.lib.Constants;
+import org.eclipse.jgit.lib.GitIndex;
 import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
 import org.eclipse.jgit.lib.ObjectLoader;
 import org.eclipse.jgit.lib.PersonIdent;
 import org.eclipse.jgit.lib.ProgressMonitor;
+import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.RefUpdate.Result;
 import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.lib.Tag;
+import org.eclipse.jgit.lib.Tree;
+import org.eclipse.jgit.lib.WorkDirCheckout;
+import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevWalk;
+import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.storage.file.FileRepository;
 import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
+import org.eclipse.jgit.transport.FetchResult;
 import org.eclipse.jgit.transport.PushResult;
 import org.eclipse.jgit.transport.RefSpec;
 import org.eclipse.jgit.transport.RemoteConfig;
@@ -48,10 +57,13 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
+@SuppressWarnings( "deprecation" )
 public class BareGitRepository
 {
 
     private static final Logger LOGGER = Logger.getLogger( BareGitRepository.class );
+
+    private static ProgressMonitor MONITOR = NullProgressMonitor.INSTANCE;
 
     private final File gitDir;
 
@@ -60,6 +72,8 @@ public class BareGitRepository
     private final FileRepository repository;
 
     private final Git git;
+
+    private FetchResult latestFetch;
 
     public BareGitRepository( final File gitDir )
         throws IOException
@@ -92,10 +106,172 @@ public class BareGitRepository
 
         if ( create && !gitDir.exists() )
         {
+            final File objectsDir = new File( gitDir, "objects" );
+            final File refsDir = new File( gitDir, "refs" );
+
+            refsDir.mkdirs();
+            objectsDir.mkdirs();
+
             repository.create( workDir == null );
+            final FileBasedConfig config = repository.getConfig();
+
+            config.setInt( "core", null, "repositoryformatversion", 0 );
+            config.setBoolean( "core", null, "filemode", true );
+            config.setBoolean( "core", null, "bare", workDir == null );
+            config.setBoolean( "core", null, "logallrefupdates", true );
+            config.setBoolean( "core", null, "ignorecase", true );
+
+            config.save();
         }
 
         git = new Git( repository );
+    }
+
+    public static void setProgressMonitor( final ProgressMonitor monitor )
+    {
+        MONITOR = monitor;
+    }
+
+    public static BareGitRepository clone( final String remoteUrl, final String remoteName, final File gitDir,
+                                           final boolean bare )
+        throws GitWrapException
+    {
+        return clone( remoteUrl, remoteName, null, gitDir, bare );
+    }
+
+    public static BareGitRepository clone( final String remoteUrl, final String remoteName, final String branch,
+                                           final File gitDir, final boolean bare )
+        throws GitWrapException
+    {
+        final File workDir = gitDir.getParentFile();
+
+        BareGitRepository gitRepository;
+        try
+        {
+            gitRepository = bare ? new BareGitRepository( gitDir, true ) : new GitRepository( workDir, true );
+        }
+        catch ( final IOException e )
+        {
+            throw new GitWrapException( "Cannot initialize new Git repository in: %s. Reason: %s", e, bare ? gitDir
+                            : workDir, e.getMessage() );
+        }
+
+        final FileRepository repository = gitRepository.getRepository();
+
+        final String branchRef = Constants.R_HEADS + ( branch == null ? Constants.MASTER : branch );
+
+        try
+        {
+            final RefUpdate head = repository.updateRef( Constants.HEAD );
+            head.disableRefLog();
+            head.link( branchRef );
+
+            final RemoteConfig remoteConfig = new RemoteConfig( repository.getConfig(), remoteName );
+            remoteConfig.addURI( new URIish( remoteUrl ) );
+
+            final String remoteRef = Constants.R_REMOTES + remoteName;
+
+            RefSpec spec = new RefSpec();
+            spec = spec.setForceUpdate( true );
+            spec = spec.setSourceDestination( Constants.R_HEADS + "*", remoteRef + "/*" );
+
+            remoteConfig.addFetchRefSpec( spec );
+
+            remoteConfig.update( repository.getConfig() );
+
+            repository.getConfig().setString( "branch", branch, "remote", remoteName );
+            repository.getConfig().setString( "branch", branch, "merge", branchRef );
+
+            repository.getConfig().save();
+
+            gitRepository.fetch( remoteName );
+            gitRepository.postClone( remoteUrl, branchRef );
+        }
+        catch ( final IOException e )
+        {
+            throw new GitWrapException( "Failed to clone from: %s. Reason: %s", e, remoteUrl, e.getMessage() );
+        }
+        catch ( final URISyntaxException e )
+        {
+            throw new GitWrapException( "Failed to clone from: %s. Reason: %s", e, remoteUrl, e.getMessage() );
+        }
+
+        return gitRepository;
+    }
+
+    protected void postClone( final String remoteUrl, final String branchRef )
+        throws GitWrapException
+    {
+        try
+        {
+            final FetchResult fetchResult = getLatestFetchResult();
+
+            final Ref remoteHead = fetchResult.getAdvertisedRef( branchRef );
+            if ( remoteHead != null && remoteHead.getObjectId() != null )
+            {
+                final Commit mapCommit = repository.mapCommit( remoteHead.getObjectId() );
+                final RefUpdate u;
+
+                u = repository.updateRef( Constants.HEAD );
+                u.setNewObjectId( mapCommit.getCommitId() );
+                u.forceUpdate();
+            }
+        }
+        catch ( final IOException e )
+        {
+            throw new GitWrapException( "Failed to clone from: %s. Reason: %s", e, remoteUrl, e.getMessage() );
+        }
+    }
+
+    public BareGitRepository fetch( final String remoteName )
+        throws GitWrapException
+    {
+        Transport transport = null;
+        try
+        {
+            final RemoteConfig remoteConfig = new RemoteConfig( repository.getConfig(), remoteName );
+            if ( remoteConfig.getURIs() == null || remoteConfig.getURIs().isEmpty() )
+            {
+                throw new GitWrapException( "Remote: %s has no associated URLs.", remoteName );
+            }
+
+            if ( remoteConfig.getFetchRefSpecs() == null || remoteConfig.getFetchRefSpecs().isEmpty() )
+            {
+                throw new GitWrapException( "Remote: %s has no associated fetch ref-specs.", remoteName );
+            }
+
+            transport = Transport.open( repository, remoteConfig );
+            latestFetch = transport.fetch( MONITOR, null );
+        }
+        catch ( final URISyntaxException e )
+        {
+            throw new GitWrapException( "Cannot read configuration for remote: %s. Reason: %s", e, remoteName,
+                                        e.getMessage() );
+        }
+        catch ( final NotSupportedException e )
+        {
+            throw new GitWrapException( "Transport not supported for remote: %s. Error was: %s", e, remoteName,
+                                        e.getMessage() );
+        }
+        catch ( final TransportException e )
+        {
+            throw new GitWrapException( "Transport error while fetching remote: %s. Error was: %s", e, remoteName,
+                                        e.getMessage() );
+        }
+        finally
+        {
+            if ( transport != null )
+            {
+                transport.close();
+            }
+        }
+
+        return this;
+    }
+
+    public FetchResult getLatestFetchResult()
+    {
+        return latestFetch;
     }
 
     public BareGitRepository push( final String name )
@@ -112,7 +288,6 @@ public class BareGitRepository
             final Collection<RemoteRefUpdate> remoteRefUpdates =
                 Transport.findRemoteRefUpdatesFor( repository, pushRefSpecs, null );
 
-            final ProgressMonitor monitor = NullProgressMonitor.INSTANCE;
             for ( final URIish uri : pushURIs )
             {
                 final Collection<RemoteRefUpdate> updates = new ArrayList<RemoteRefUpdate>();
@@ -126,7 +301,7 @@ public class BareGitRepository
                 {
                     transport = Transport.open( repository, uri );
                     transport.applyConfig( remote );
-                    final PushResult result = transport.push( monitor, updates );
+                    final PushResult result = transport.push( MONITOR, updates );
 
                     if ( result.getMessages().length() > 0 && LOGGER.isDebugEnabled() )
                     {
@@ -267,6 +442,81 @@ public class BareGitRepository
         }
 
         return this;
+    }
+
+    public BareGitRepository createBranchFromHead( final String name )
+        throws GitWrapException
+    {
+        return createBranch( Constants.HEAD, name );
+    }
+
+    public BareGitRepository createBranch( final String source, final String name )
+        throws GitWrapException
+    {
+        final String refName = name.startsWith( Constants.R_HEADS ) ? name : Constants.R_HEADS + name;
+
+        try
+        {
+            final RevWalk walk = new RevWalk( repository );
+
+            final RefUpdate updateRef = repository.updateRef( refName );
+            final ObjectId startAt = new RevWalk( repository ).parseCommit( repository.resolve( source ) );
+
+            updateRef.setNewObjectId( startAt );
+            updateRef.setRefLogMessage( "branch: Created from " + source, false );
+            updateRef.update();
+
+            final RevCommit newCommit = walk.parseCommit( repository.resolve( refName ) );
+            final RevCommit oldCommit = walk.parseCommit( repository.resolve( source ) );
+
+            final GitIndex index = repository.getIndex();
+            final Tree newTree = newCommit.asCommit( walk ).getTree();
+            final Tree oldTree = oldCommit.asCommit( walk ).getTree();
+            final WorkDirCheckout checkout =
+                new WorkDirCheckout( repository, repository.getWorkTree(), oldTree, index, newTree );
+
+            checkout.checkout();
+
+            index.write();
+
+            final RefUpdate u = repository.updateRef( source, false );
+            u.setRefLogMessage( "checkout: moving to " + refName, false );
+            final Result res = u.link( refName );
+
+            switch ( res )
+            {
+                case NEW:
+                case FORCED:
+                case NO_CHANGE:
+                case FAST_FORWARD:
+                    break;
+                default:
+                    throw new GitWrapException( "Error linking new branch: %s to source: %s. %s", refName, source,
+                                                u.getResult().name() );
+            }
+        }
+        catch ( final IOException e )
+        {
+            throw new GitWrapException( "Failed to create branch: %s from: %s.\nReason: %s", e, refName, source,
+                                        e.getMessage() );
+        }
+
+        return this;
+    }
+
+    public boolean hasBranch( final String name )
+        throws GitWrapException
+    {
+        final String refName = Constants.R_HEADS + name;
+        try
+        {
+            return repository.resolve( refName ) != null;
+        }
+        catch ( final IOException e )
+        {
+            throw new GitWrapException( "Failed to resolve branch: %s.\nReason: %s", e, refName, e.getMessage() );
+        }
+
     }
 
     protected final Git getGit()
