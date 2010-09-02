@@ -444,6 +444,19 @@ public class BareGitRepository
         return this;
     }
 
+    public String getHeadRevision()
+        throws GitWrapException
+    {
+        try
+        {
+            return repository.resolve( Constants.HEAD ).getName();
+        }
+        catch ( final IOException e )
+        {
+            throw new GitWrapException( "Failed to retrieve HEAD revision. Reason: %s", e, e.getMessage() );
+        }
+    }
+
     public BareGitRepository createBranchFromHead( final String name )
         throws GitWrapException
     {
