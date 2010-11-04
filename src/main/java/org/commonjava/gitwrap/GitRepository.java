@@ -60,6 +60,26 @@ public class GitRepository
         super( new File( workDir, Constants.DOT_GIT ), create, workDir );
     }
 
+    public static GitRepository clone( final String remoteUrl, final String remoteName, final File targetDir,
+                                       final boolean bare )
+        throws GitWrapException
+    {
+        return clone( remoteUrl, remoteName, null, targetDir, bare );
+    }
+
+    public static GitRepository clone( final String remoteUrl, final String remoteName, final String branch,
+                                       final File targetDir, final boolean bare )
+        throws GitWrapException
+    {
+        File gitDir = targetDir;
+        if ( !Constants.DOT_GIT.equals( targetDir.getName() ) )
+        {
+            gitDir = new File( targetDir, Constants.DOT_GIT );
+        }
+
+        return (GitRepository) BareGitRepository.clone( remoteUrl, remoteName, branch, gitDir, bare );
+    }
+
     public GitRepository commitChanges( final String message, final String... filePatterns )
         throws GitWrapException
     {
