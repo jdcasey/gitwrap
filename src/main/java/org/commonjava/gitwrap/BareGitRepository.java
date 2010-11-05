@@ -21,7 +21,6 @@ import org.apache.log4j.Logger;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.errors.NotSupportedException;
 import org.eclipse.jgit.errors.TransportException;
-import org.eclipse.jgit.lib.Commit;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.GitIndex;
 import org.eclipse.jgit.lib.NullProgressMonitor;
@@ -33,11 +32,12 @@ import org.eclipse.jgit.lib.ProgressMonitor;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.eclipse.jgit.lib.RefUpdate.Result;
+import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
-import org.eclipse.jgit.lib.Tag;
-import org.eclipse.jgit.lib.Tree;
+import org.eclipse.jgit.lib.TagBuilder;
 import org.eclipse.jgit.lib.WorkDirCheckout;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.storage.file.FileRepository;
@@ -209,11 +209,12 @@ public class BareGitRepository
             final Ref remoteHead = fetchResult.getAdvertisedRef( branchRef );
             if ( remoteHead != null && remoteHead.getObjectId() != null )
             {
-                final Commit mapCommit = repository.mapCommit( remoteHead.getObjectId() );
+                final RevWalk walk = new RevWalk( repository );
+                final RevCommit commit = walk.parseCommit( remoteHead.getObjectId() );
                 final RefUpdate u;
 
                 u = repository.updateRef( Constants.HEAD );
-                u.setNewObjectId( mapCommit.getCommitId() );
+                u.setNewObjectId( commit );
                 u.forceUpdate();
             }
         }
@@ -405,35 +406,71 @@ public class BareGitRepository
     public BareGitRepository createTag( final String tagSource, final String tagName, final String message )
         throws GitWrapException
     {
+        return createTag( tagSource, tagName, message, false );
+    }
+
+    public BareGitRepository createTag( final String tagSource, final String tagName, final String message,
+                                        final boolean force )
+        throws GitWrapException
+    {
         try
         {
-            final ObjectId head = repository.resolve( tagSource );
+            final ObjectId src = repository.resolve( tagSource );
+            if ( src == null )
+            {
+                throw new GitWrapException( "Cannot resolve tag-source: %s", tagSource );
+            }
 
-            final Tag tag = new Tag( repository );
-            tag.setTag( tagName );
+            if ( !force && repository.resolve( tagName ) != null )
+            {
+                throw new GitWrapException( "Tag: %s already exists!", tagName );
+            }
+
+            String dest = tagName;
+            if ( !dest.startsWith( Constants.R_TAGS ) )
+            {
+                dest = Constants.R_TAGS + tagName;
+            }
+
+            final String tagShort = dest.substring( Constants.R_TAGS.length() );
+
+            final ObjectLoader sourceLoader = repository.open( src );
+            final ObjectInserter inserter = repository.newObjectInserter();
+
+            final TagBuilder tag = new TagBuilder();
+            tag.setTag( tagShort );
             tag.setTagger( new PersonIdent( repository ) );
-            tag.setObjId( head );
+            tag.setObjectId( src, sourceLoader.getType() );
             tag.setMessage( message );
 
-            final ObjectLoader object = repository.open( head );
-            tag.setType( Constants.typeString( object.getType() ) );
-
-            final ObjectInserter inserter = repository.newObjectInserter();
-            final ObjectId tagId = inserter.insert( Constants.OBJ_TAG, inserter.format( tag ) );
-
+            final ObjectId tagId = inserter.insert( tag );
             tag.setTagId( tagId );
 
             final String refName = Constants.R_TAGS + tag.getTag();
 
             final RefUpdate tagRef = repository.updateRef( refName );
             tagRef.setNewObjectId( tag.getTagId() );
+            tagRef.setForceUpdate( force );
+            tagRef.setRefLogMessage( "Tagging source: " + src.name() + " as " + tagName, false );
 
-            tagRef.setForceUpdate( true );
             final Result updateResult = tagRef.update();
 
-            if ( updateResult != Result.NEW && updateResult != Result.FORCED )
+            switch ( updateResult )
             {
-                throw new GitWrapException( "Invalid tag result: %s", updateResult );
+                case NEW:
+                case FAST_FORWARD:
+                case FORCED:
+                {
+                    break;
+                }
+                case REJECTED:
+                {
+                    throw new GitWrapException( "Tag already exists: %s", tagName );
+                }
+                default:
+                {
+                    throw new GitWrapException( "Cannot lock tag: %s", tagName );
+                }
             }
         }
         catch ( final IOException e )
@@ -470,23 +507,49 @@ public class BareGitRepository
 
         try
         {
-            final RevWalk walk = new RevWalk( repository );
+            String src;
+            final Ref from = repository.getRef( source );
+            final ObjectId startAt = repository.resolve( source + "^0" );
+            if ( from != null )
+            {
+                src = from.getName();
+            }
+            else
+            {
+                src = startAt.name();
+            }
+            src = repository.shortenRefName( src );
+
+            if ( !Repository.isValidRefName( refName ) )
+            {
+                throw new GitWrapException( "Invalid branch name: " + refName );
+            }
+
+            if ( repository.resolve( refName ) != null )
+            {
+                throw new GitWrapException( "Branch: " + refName + " already exists!" );
+            }
 
             final RefUpdate updateRef = repository.updateRef( refName );
-            final ObjectId startAt = new RevWalk( repository ).parseCommit( repository.resolve( source ) );
-
             updateRef.setNewObjectId( startAt );
             updateRef.setRefLogMessage( "branch: Created from " + source, false );
-            updateRef.update();
+            final Result updateResult = updateRef.update();
 
+            if ( updateResult == Result.REJECTED )
+            {
+                throw new GitWrapException( "Branch creation rejected for: %s", refName );
+            }
+
+            final RevWalk walk = new RevWalk( repository );
             final RevCommit newCommit = walk.parseCommit( repository.resolve( refName ) );
-            final RevCommit oldCommit = walk.parseCommit( repository.resolve( source ) );
+            final RevCommit oldCommit = walk.parseCommit( repository.resolve( src ) );
 
             final GitIndex index = repository.getIndex();
-            final Tree newTree = newCommit.asCommit( walk ).getTree();
-            final Tree oldTree = oldCommit.asCommit( walk ).getTree();
+            final RevTree newTree = newCommit.getTree();
+            final RevTree oldTree = oldCommit.getTree();
             final WorkDirCheckout checkout =
-                new WorkDirCheckout( repository, repository.getWorkTree(), oldTree, index, newTree );
+                new WorkDirCheckout( repository, repository.getWorkTree(), repository.mapTree( oldTree ), index,
+                                     repository.mapTree( newTree ) );
 
             checkout.checkout();
 

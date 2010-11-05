@@ -18,14 +18,13 @@
 package org.commonjava.gitwrap;
 
 import org.eclipse.jgit.api.AddCommand;
-import org.eclipse.jgit.api.ConcurrentRefUpdateException;
-import org.eclipse.jgit.api.JGitInternalException;
-import org.eclipse.jgit.api.NoFilepatternException;
-import org.eclipse.jgit.api.NoHeadException;
-import org.eclipse.jgit.api.NoMessageException;
-import org.eclipse.jgit.api.WrongRepositoryStateException;
+import org.eclipse.jgit.api.errors.ConcurrentRefUpdateException;
+import org.eclipse.jgit.api.errors.JGitInternalException;
+import org.eclipse.jgit.api.errors.NoFilepatternException;
+import org.eclipse.jgit.api.errors.NoHeadException;
+import org.eclipse.jgit.api.errors.NoMessageException;
+import org.eclipse.jgit.api.errors.WrongRepositoryStateException;
 import org.eclipse.jgit.errors.UnmergedPathException;
-import org.eclipse.jgit.lib.Commit;
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.GitIndex;
 import org.eclipse.jgit.lib.PersonIdent;
@@ -35,6 +34,7 @@ import org.eclipse.jgit.lib.RefUpdate.Result;
 import org.eclipse.jgit.lib.Tree;
 import org.eclipse.jgit.lib.WorkDirCheckout;
 import org.eclipse.jgit.revwalk.RevCommit;
+import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileRepository;
 import org.eclipse.jgit.transport.FetchResult;
@@ -171,10 +171,11 @@ public class GitRepository
                 final RevCommit oldCommit = walk.parseCommit( repository.resolve( source ) );
 
                 final GitIndex index = repository.getIndex();
-                final Tree newTree = newCommit.asCommit( walk ).getTree();
-                final Tree oldTree = oldCommit.asCommit( walk ).getTree();
+                final RevTree newTree = newCommit.getTree();
+                final RevTree oldTree = oldCommit.getTree();
                 final WorkDirCheckout checkout =
-                    new WorkDirCheckout( repository, repository.getWorkTree(), oldTree, index, newTree );
+                    new WorkDirCheckout( repository, repository.getWorkTree(), repository.mapTree( oldTree ), index,
+                                         repository.mapTree( newTree ) );
 
                 checkout.checkout();
 
@@ -220,13 +221,13 @@ public class GitRepository
             if ( remoteHead != null && remoteHead.getObjectId() != null )
             {
                 final FileRepository repo = getRepository();
-                final GitIndex index = new GitIndex( repo );
-                final Commit mapCommit = repo.mapCommit( remoteHead.getObjectId() );
-                final Tree tree = mapCommit.getTree();
-                final WorkDirCheckout co;
 
-                co = new WorkDirCheckout( repo, repo.getWorkTree(), index, tree );
-                co.checkout();
+                final RevWalk walk = new RevWalk( repo );
+                final RevCommit commit = walk.parseCommit( remoteHead.getObjectId() );
+                final GitIndex index = new GitIndex( repo );
+                final Tree tree = repo.mapTree( commit.getTree() );
+
+                new WorkDirCheckout( repo, repo.getWorkTree(), index, tree ).checkout();
                 index.write();
             }
         }
