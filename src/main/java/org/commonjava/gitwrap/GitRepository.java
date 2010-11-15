@@ -150,7 +150,7 @@ public class GitRepository
         {
             refName = Constants.HEAD;
         }
-        else if ( name.startsWith( Constants.R_HEADS ) )
+        else if ( name.startsWith( Constants.R_HEADS ) || name.startsWith( Constants.R_TAGS ) )
         {
             refName = name;
         }
