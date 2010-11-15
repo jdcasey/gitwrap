@@ -55,7 +55,10 @@ import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 @SuppressWarnings( "deprecation" )
 public class BareGitRepository
@@ -222,6 +225,41 @@ public class BareGitRepository
         {
             throw new GitWrapException( "Failed to clone from: %s. Reason: %s", e, remoteUrl, e.getMessage() );
         }
+    }
+
+    public Set<String> getTags()
+        throws GitWrapException
+    {
+        return getRefs( Constants.R_TAGS );
+    }
+
+    public Set<String> getBranches()
+        throws GitWrapException
+    {
+        return getRefs( Constants.R_HEADS );
+    }
+
+    public Set<String> getRemotes()
+        throws GitWrapException
+    {
+        return getRefs( Constants.R_REMOTES );
+    }
+
+    public Set<String> getRefs( final String refPrefix )
+        throws GitWrapException
+    {
+        Map<String, Ref> refs;
+        try
+        {
+            refs = repository.getRefDatabase().getRefs( refPrefix );
+        }
+        catch ( final IOException e )
+        {
+            throw new GitWrapException( "Failed to read refs from: %s. Reason: %s", e, repository.getDirectory(),
+                                        e.getMessage() );
+        }
+
+        return new HashSet<String>( refs.keySet() );
     }
 
     public BareGitRepository fetch( final String remoteName )
@@ -503,7 +541,9 @@ public class BareGitRepository
     public BareGitRepository createBranch( final String source, final String name )
         throws GitWrapException
     {
-        final String refName = name.startsWith( Constants.R_HEADS ) ? name : Constants.R_HEADS + name;
+        final String refName =
+            ( name.startsWith( Constants.R_HEADS ) || name.startsWith( Constants.R_TAGS ) ) ? name : Constants.R_HEADS
+                            + name;
 
         try
         {
