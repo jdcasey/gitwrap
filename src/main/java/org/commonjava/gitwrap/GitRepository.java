@@ -60,24 +60,37 @@ public class GitRepository
         super( new File( workDir, Constants.DOT_GIT ), create, workDir );
     }
 
-    public static GitRepository clone( final String remoteUrl, final String remoteName, final File targetDir,
-                                       final boolean bare )
+    public static GitRepository cloneWithWorkdir( final String remoteUrl, final String remoteName,
+                                                  final File targetDir, final boolean bare )
         throws GitWrapException
     {
-        return clone( remoteUrl, remoteName, null, targetDir, bare );
+        return cloneWithWorkdir( remoteUrl, remoteName, null, targetDir, bare );
     }
 
-    public static GitRepository clone( final String remoteUrl, final String remoteName, final String branch,
-                                       final File targetDir, final boolean bare )
+    public static GitRepository cloneWithWorkdir( final String remoteUrl, final String remoteName, final String branch,
+                                                  final File targetDir, final boolean bare )
         throws GitWrapException
     {
-        File gitDir = targetDir;
-        if ( !Constants.DOT_GIT.equals( targetDir.getName() ) )
+        File workDir = targetDir;
+        if ( workDir.getName().equals( ".git" ) )
         {
-            gitDir = new File( targetDir, Constants.DOT_GIT );
+            workDir = workDir.getParentFile();
         }
 
-        return (GitRepository) BareGitRepository.clone( remoteUrl, remoteName, branch, gitDir, bare );
+        GitRepository repo;
+        try
+        {
+            repo = new GitRepository( workDir, true );
+        }
+        catch ( final IOException e )
+        {
+            throw new GitWrapException( "Cannot initialize new Git repository in: %s. Reason: %s", e, targetDir,
+                                        e.getMessage() );
+        }
+
+        repo.doClone( remoteUrl, remoteName, branch );
+
+        return repo;
     }
 
     public GitRepository commitChanges( final String message, final String... filePatterns )
@@ -202,6 +215,12 @@ public class GitRepository
                 throw new GitWrapException( "Failed to checkout branch: %s from: %s.\nReason: %s", e, refName, source,
                                             e.getMessage() );
             }
+        }
+        else
+        {
+            throw new GitWrapException(
+                                        "Cannot checkout non-existent branch: %s. Perhaps you meant to call createBranch(..)?",
+                                        refName );
         }
 
         return this;

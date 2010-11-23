@@ -22,7 +22,6 @@ import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.errors.NotSupportedException;
 import org.eclipse.jgit.errors.TransportException;
 import org.eclipse.jgit.lib.Constants;
-import org.eclipse.jgit.lib.GitIndex;
 import org.eclipse.jgit.lib.NullProgressMonitor;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.ObjectInserter;
@@ -35,9 +34,7 @@ import org.eclipse.jgit.lib.RefUpdate.Result;
 import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.lib.StoredConfig;
 import org.eclipse.jgit.lib.TagBuilder;
-import org.eclipse.jgit.lib.WorkDirCheckout;
 import org.eclipse.jgit.revwalk.RevCommit;
-import org.eclipse.jgit.revwalk.RevTree;
 import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.storage.file.FileBasedConfig;
 import org.eclipse.jgit.storage.file.FileRepository;
@@ -60,7 +57,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-@SuppressWarnings( "deprecation" )
 public class BareGitRepository
 {
 
@@ -135,31 +131,37 @@ public class BareGitRepository
         MONITOR = monitor;
     }
 
-    public static BareGitRepository clone( final String remoteUrl, final String remoteName, final File gitDir,
-                                           final boolean bare )
+    public static BareGitRepository cloneBare( final String remoteUrl, final String remoteName, final File gitDir )
         throws GitWrapException
     {
-        return clone( remoteUrl, remoteName, null, gitDir, bare );
+        return cloneBare( remoteUrl, remoteName, null, gitDir );
     }
 
-    public static BareGitRepository clone( final String remoteUrl, final String remoteName, final String branch,
-                                           final File gitDir, final boolean bare )
+    public static BareGitRepository cloneBare( final String remoteUrl, final String remoteName, final String branch,
+                                               final File gitDir )
         throws GitWrapException
     {
-        final File workDir = gitDir.getParentFile();
-
         BareGitRepository gitRepository;
         try
         {
-            gitRepository = bare ? new BareGitRepository( gitDir, true ) : new GitRepository( workDir, true );
+            gitRepository = new BareGitRepository( gitDir, true ); // bare ? new BareGitRepository( gitDir, true ) : new
+                                                                   // GitRepository( workDir, true );
         }
         catch ( final IOException e )
         {
-            throw new GitWrapException( "Cannot initialize new Git repository in: %s. Reason: %s", e, bare ? gitDir
-                            : workDir, e.getMessage() );
+            throw new GitWrapException( "Cannot initialize new Git repository in: %s. Reason: %s", e, gitDir,
+                                        e.getMessage() );
         }
 
-        final FileRepository repository = gitRepository.getRepository();
+        gitRepository.doClone( remoteUrl, remoteName, branch );
+
+        return gitRepository;
+    }
+
+    protected final void doClone( final String remoteUrl, final String remoteName, final String branch )
+        throws GitWrapException
+    {
+        final FileRepository repository = getRepository();
 
         final String branchRef = Constants.R_HEADS + ( branch == null ? Constants.MASTER : branch );
 
@@ -187,8 +189,8 @@ public class BareGitRepository
 
             repository.getConfig().save();
 
-            gitRepository.fetch( remoteName );
-            gitRepository.postClone( remoteUrl, branchRef );
+            fetch( remoteName );
+            postClone( remoteUrl, branchRef );
         }
         catch ( final IOException e )
         {
@@ -198,8 +200,6 @@ public class BareGitRepository
         {
             throw new GitWrapException( "Failed to clone from: %s. Reason: %s", e, remoteUrl, e.getMessage() );
         }
-
-        return gitRepository;
     }
 
     protected void postClone( final String remoteUrl, final String branchRef )
@@ -579,37 +579,6 @@ public class BareGitRepository
             {
                 throw new GitWrapException( "Branch creation rejected for: %s", refName );
             }
-
-            final RevWalk walk = new RevWalk( repository );
-            final RevCommit newCommit = walk.parseCommit( repository.resolve( refName ) );
-            final RevCommit oldCommit = walk.parseCommit( repository.resolve( src ) );
-
-            final GitIndex index = repository.getIndex();
-            final RevTree newTree = newCommit.getTree();
-            final RevTree oldTree = oldCommit.getTree();
-            final WorkDirCheckout checkout =
-                new WorkDirCheckout( repository, repository.getWorkTree(), repository.mapTree( oldTree ), index,
-                                     repository.mapTree( newTree ) );
-
-            checkout.checkout();
-
-            index.write();
-
-            final RefUpdate u = repository.updateRef( source, false );
-            u.setRefLogMessage( "checkout: moving to " + refName, false );
-            final Result res = u.link( refName );
-
-            switch ( res )
-            {
-                case NEW:
-                case FORCED:
-                case NO_CHANGE:
-                case FAST_FORWARD:
-                    break;
-                default:
-                    throw new GitWrapException( "Error linking new branch: %s to source: %s. %s", refName, source,
-                                                u.getResult().name() );
-            }
         }
         catch ( final IOException e )
         {
@@ -623,7 +592,10 @@ public class BareGitRepository
     public boolean hasBranch( final String name )
         throws GitWrapException
     {
-        final String refName = Constants.R_HEADS + name;
+        final String refName =
+            ( name.startsWith( Constants.R_HEADS ) || name.startsWith( Constants.R_TAGS ) ) ? name : Constants.R_HEADS
+                            + name;
+
         try
         {
             return repository.resolve( refName ) != null;

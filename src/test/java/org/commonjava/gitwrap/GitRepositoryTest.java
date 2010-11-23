@@ -17,6 +17,7 @@
 
 package org.commonjava.gitwrap;
 
+import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.TextProgressMonitor;
 import org.eclipse.jgit.storage.file.FileRepository;
@@ -30,11 +31,11 @@ import java.io.File;
 import java.io.IOException;
 import java.net.URISyntaxException;
 
-public class BareGitRepositoryTest
+public class GitRepositoryTest
 {
 
     @Test
-    public void cloneBare_NoBranch()
+    public void cloneNonBare_NoBranch()
         throws IOException, GitWrapException, URISyntaxException
     {
         final File gitDir = new File( ".git" );
@@ -47,13 +48,60 @@ public class BareGitRepositoryTest
             final FileRepository repository = new FileRepository( builder );
             final RemoteConfig config = new RemoteConfig( repository.getConfig(), "origin" );
 
-            final File newGitDir = File.createTempFile( "git-clone.", ".git" );
-            newGitDir.delete();
+            final File newWorkDir = File.createTempFile( "git-clone", "" );
+            newWorkDir.delete();
 
-            BareGitRepository.setProgressMonitor( new TextProgressMonitor() );
+            final File newGitDir = new File( newWorkDir, ".git" );
 
-            final BareGitRepository clone =
-                BareGitRepository.cloneBare( config.getURIs().get( 0 ).toString(), "origin", newGitDir );
+            GitRepository.setProgressMonitor( new TextProgressMonitor() );
+
+            final GitRepository clone =
+                GitRepository.cloneWithWorkdir( config.getURIs().get( 0 ).toString(), "origin", newGitDir, false );
+
+            System.out.println( clone.getGitDir() );
+
+            System.out.println();
+
+            final FetchResult fetchResult = clone.getLatestFetchResult();
+            for ( final Ref ref : fetchResult.getAdvertisedRefs() )
+            {
+                System.out.println( ref.getName() );
+            }
+
+            System.out.println();
+
+            for ( final TrackingRefUpdate update : fetchResult.getTrackingRefUpdates() )
+            {
+                System.out.println( update.getLocalName() + " -> " + update.getRemoteName() );
+            }
+        }
+    }
+
+    @Test
+    public void cloneNonBare_BranchMasterToNakedRefname()
+        throws IOException, GitWrapException, URISyntaxException
+    {
+        final File gitDir = new File( ".git" );
+        if ( gitDir.exists() )
+        {
+            final FileRepositoryBuilder builder = new FileRepositoryBuilder();
+            builder.setGitDir( gitDir );
+            builder.setup();
+
+            final FileRepository repository = new FileRepository( builder );
+            final RemoteConfig config = new RemoteConfig( repository.getConfig(), "origin" );
+
+            final File newWorkDir = File.createTempFile( "git-clone", "" );
+            newWorkDir.delete();
+
+            final File newGitDir = new File( newWorkDir, ".git" );
+
+            GitRepository.setProgressMonitor( new TextProgressMonitor() );
+
+            final GitRepository clone =
+                GitRepository.cloneWithWorkdir( config.getURIs().get( 0 ).toString(), "origin", newGitDir, false );
+
+            clone.createBranch( Constants.HEAD, "test-branch" );
 
             System.out.println( clone.getGitDir() );
 
