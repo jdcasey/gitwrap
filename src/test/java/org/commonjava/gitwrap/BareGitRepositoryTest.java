@@ -17,6 +17,9 @@
 
 package org.commonjava.gitwrap;
 
+import static org.commonjava.gitwrap.TestUtils.configureLogging;
+import static org.commonjava.gitwrap.TestUtils.delete;
+
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.TextProgressMonitor;
 import org.eclipse.jgit.storage.file.FileRepository;
@@ -24,6 +27,8 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.FetchResult;
 import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.TrackingRefUpdate;
+import org.junit.After;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
@@ -32,6 +37,20 @@ import java.net.URISyntaxException;
 
 public class BareGitRepositoryTest
 {
+
+    private File testGitDir;
+
+    @BeforeClass
+    public static void setupLogging()
+    {
+        configureLogging();
+    }
+
+    @After
+    public void deleteWorkDir()
+    {
+        delete( testGitDir );
+    }
 
     @Test
     public void cloneBare_NoBranch()
@@ -47,13 +66,13 @@ public class BareGitRepositoryTest
             final FileRepository repository = new FileRepository( builder );
             final RemoteConfig config = new RemoteConfig( repository.getConfig(), "origin" );
 
-            final File newGitDir = File.createTempFile( "git-clone.", ".git" );
-            newGitDir.delete();
+            testGitDir = File.createTempFile( "git-clone.", ".git" );
+            testGitDir.delete();
 
             BareGitRepository.setProgressMonitor( new TextProgressMonitor() );
 
             final BareGitRepository clone =
-                BareGitRepository.cloneBare( config.getURIs().get( 0 ).toString(), "origin", newGitDir );
+                BareGitRepository.cloneBare( config.getURIs().get( 0 ).toString(), "origin", testGitDir );
 
             System.out.println( clone.getGitDir() );
 

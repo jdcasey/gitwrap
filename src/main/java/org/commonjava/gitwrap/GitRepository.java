@@ -17,6 +17,7 @@
 
 package org.commonjava.gitwrap;
 
+import org.apache.log4j.Logger;
 import org.eclipse.jgit.api.AddCommand;
 import org.eclipse.jgit.api.errors.ConcurrentRefUpdateException;
 import org.eclipse.jgit.api.errors.JGitInternalException;
@@ -47,6 +48,8 @@ import java.io.IOException;
 public class GitRepository
     extends BareGitRepository
 {
+
+    private static final Logger LOGGER = Logger.getLogger( GitRepository.class );
 
     public GitRepository( final File workDir )
         throws IOException
@@ -150,12 +153,12 @@ public class GitRepository
     {
         super.createBranch( source, name );
 
-        checkoutBranch( source, name );
+        checkoutBranch( name );
 
         return this;
     }
 
-    public GitRepository checkoutBranch( final String source, final String name )
+    public GitRepository checkoutBranch( final String name )
         throws GitWrapException
     {
         final String refName;
@@ -174,31 +177,68 @@ public class GitRepository
 
         if ( hasBranch( refName ) )
         {
+            if ( LOGGER.isDebugEnabled() )
+            {
+                LOGGER.debug( "Checking out: " + refName );
+            }
+
             final FileRepository repository = getRepository();
+            final boolean detach = !refName.startsWith( Constants.R_HEADS );
 
             try
             {
                 final RevWalk walk = new RevWalk( repository );
-
                 final RevCommit newCommit = walk.parseCommit( repository.resolve( refName ) );
-                final RevCommit oldCommit = walk.parseCommit( repository.resolve( source ) );
-
+                final RevCommit oldCommit = walk.parseCommit( repository.resolve( Constants.HEAD ) );
                 final GitIndex index = repository.getIndex();
                 final RevTree newTree = newCommit.getTree();
                 final RevTree oldTree = oldCommit.getTree();
+
+                if ( LOGGER.isDebugEnabled() )
+                {
+                    LOGGER.debug( "Checking out: " + newCommit + " (resolved from: " + refName + ")" );
+                }
+
                 final WorkDirCheckout checkout =
                     new WorkDirCheckout( repository, repository.getWorkTree(), repository.mapTree( oldTree ), index,
                                          repository.mapTree( newTree ) );
 
                 checkout.checkout();
 
+                if ( LOGGER.isDebugEnabled() )
+                {
+                    LOGGER.debug( "Writing index..." );
+                }
+
                 index.write();
 
-                final RefUpdate u = repository.updateRef( source, false );
-                u.setRefLogMessage( "checkout: moving to " + refName, false );
-                final Result res = u.link( refName );
+                final RefUpdate u = repository.updateRef( Constants.HEAD, detach );
+                Result result;
+                if ( detach )
+                {
+                    u.setNewObjectId( newCommit.getId() );
+                    u.setRefLogMessage( "Switching to detached branch: " + refName, false );
 
-                switch ( res )
+                    if ( LOGGER.isDebugEnabled() )
+                    {
+                        LOGGER.debug( "Updating head ref to point to: " + newCommit.getId() );
+                    }
+
+                    result = u.forceUpdate();
+                }
+                else
+                {
+                    u.setRefLogMessage( "Switching to linked branch: " + refName, false );
+
+                    if ( LOGGER.isDebugEnabled() )
+                    {
+                        LOGGER.debug( "Linking head ref to: " + refName );
+                    }
+
+                    result = u.link( refName );
+                }
+
+                switch ( result )
                 {
                     case NEW:
                     case FORCED:
@@ -206,14 +246,13 @@ public class GitRepository
                     case FAST_FORWARD:
                         break;
                     default:
-                        throw new GitWrapException( "Error linking branch: %s to source: %s after checkout. %s",
-                                                    refName, source, u.getResult().name() );
+                        throw new GitWrapException( "Error checking out branch: %s. Result: %s", refName, u.getResult()
+                                                                                                           .name() );
                 }
             }
             catch ( final IOException e )
             {
-                throw new GitWrapException( "Failed to checkout branch: %s from: %s.\nReason: %s", e, refName, source,
-                                            e.getMessage() );
+                throw new GitWrapException( "Failed to checkout branch: %s.\nReason: %s", e, refName, e.getMessage() );
             }
         }
         else

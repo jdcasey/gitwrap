@@ -549,6 +549,12 @@ public class BareGitRepository
         {
             String src;
             final Ref from = repository.getRef( source );
+
+            if ( LOGGER.isDebugEnabled() )
+            {
+                LOGGER.debug( "Creating branch: " + refName + " from: " + from );
+            }
+
             final ObjectId startAt = repository.resolve( source + "^0" );
             if ( from != null )
             {

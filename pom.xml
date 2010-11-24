@@ -82,6 +82,15 @@
             <target>1.6</target>
           </configuration>
         </plugin>
+        <plugin>
+          <artifactId>maven-surefire-plugin</artifactId>
+          <version>2.6</version>
+          <configuration>
+            <excludes>
+              <exclude>**/TestUtils*</exclude>
+            </excludes>
+          </configuration>
+        </plugin>
         
         <plugin>
           <artifactId>maven-release-plugin</artifactId>

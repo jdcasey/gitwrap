@@ -17,6 +17,9 @@
 
 package org.commonjava.gitwrap;
 
+import static org.commonjava.gitwrap.TestUtils.configureLogging;
+import static org.commonjava.gitwrap.TestUtils.delete;
+
 import org.eclipse.jgit.lib.Constants;
 import org.eclipse.jgit.lib.Ref;
 import org.eclipse.jgit.lib.TextProgressMonitor;
@@ -25,6 +28,8 @@ import org.eclipse.jgit.storage.file.FileRepositoryBuilder;
 import org.eclipse.jgit.transport.FetchResult;
 import org.eclipse.jgit.transport.RemoteConfig;
 import org.eclipse.jgit.transport.TrackingRefUpdate;
+import org.junit.After;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
@@ -33,6 +38,20 @@ import java.net.URISyntaxException;
 
 public class GitRepositoryTest
 {
+
+    private File workDir;
+
+    @BeforeClass
+    public static void setupLogging()
+    {
+        configureLogging();
+    }
+
+    @After
+    public void deleteWorkDir()
+    {
+        delete( workDir );
+    }
 
     @Test
     public void cloneNonBare_NoBranch()
@@ -48,10 +67,10 @@ public class GitRepositoryTest
             final FileRepository repository = new FileRepository( builder );
             final RemoteConfig config = new RemoteConfig( repository.getConfig(), "origin" );
 
-            final File newWorkDir = File.createTempFile( "git-clone", "" );
-            newWorkDir.delete();
+            final File workDir = File.createTempFile( "git-clone", "" );
+            workDir.delete();
 
-            final File newGitDir = new File( newWorkDir, ".git" );
+            final File newGitDir = new File( workDir, ".git" );
 
             GitRepository.setProgressMonitor( new TextProgressMonitor() );
 
@@ -91,10 +110,10 @@ public class GitRepositoryTest
             final FileRepository repository = new FileRepository( builder );
             final RemoteConfig config = new RemoteConfig( repository.getConfig(), "origin" );
 
-            final File newWorkDir = File.createTempFile( "git-clone", "" );
-            newWorkDir.delete();
+            workDir = File.createTempFile( "git-clone", "" );
+            workDir.delete();
 
-            final File newGitDir = new File( newWorkDir, ".git" );
+            final File newGitDir = new File( workDir, ".git" );
 
             GitRepository.setProgressMonitor( new TextProgressMonitor() );
 
