@@ -20,7 +20,7 @@
   <groupId>org.commonjava.gitwrap</groupId>
   <artifactId>gitwrap</artifactId>
   <packaging>jar</packaging>
-  <version>0.2-SNAPSHOT</version>
+  <version>0.2</version>
   
   <name>gitwrap - jGit Wrapper</name>
   <description>Convenience API to make jGit easier to use</description>
