@@ -47,18 +47,13 @@
     </license>
   </licenses>
   
-  <distributionManagement>
-    <repository>
-      <id>nexus</id>
-      <name>Local Nexus Releases Repository</name>
-      <url>http://localhost:8081/nexus/content/repositories/releases</url>
-    </repository>
-    <snapshotRepository>
-      <id>nexus</id>
-      <name>Local Nexus Snapshots Repository</name>
-      <url>http://localhost:8081/nexus/content/repositories/snapshots</url>
-    </snapshotRepository>
-  </distributionManagement>
+  <developers>
+    <developer>
+      <id>jdcasey</id>
+      <name>John Casey</name>
+      <email>jdcasey@commonjava.org</email>
+    </developer>
+  </developers>
   
   <dependencies>
     <dependency>
